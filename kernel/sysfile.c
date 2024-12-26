@@ -328,12 +328,19 @@ sys_open(void)
       return -1;
     }
     ilock(ip);
+    
+    if((omode & O_NOFOLLOW) && ip->type == T_SYMLINK){
+      iunlockput(ip);
+      end_op();
+      return -1; 
+    }
     if(ip->type == T_DIR && omode != O_RDONLY){
       iunlockput(ip);
       end_op();
       return -1;
     }
   }
+  
 
   if(ip->type == T_DEVICE && (ip->major < 0 || ip->major >= NDEV)){
     iunlockput(ip);
