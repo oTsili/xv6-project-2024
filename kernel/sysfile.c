@@ -503,3 +503,37 @@ sys_pipe(void)
   }
   return 0;
 }
+
+
+uint64 sys_symlink(void) {
+    char target[MAXPATH], path[MAXPATH];
+    
+    // Retrieve the target and path from the user arguments
+    if (argstr(0, target, MAXPATH) < 0 || argstr(1, path, MAXPATH) < 0) {
+        return -1;  // Invalid arguments
+    }
+
+    begin_op();  // Begin a filesystem operation (lock)
+    
+    // Create a new inode for the symlink (type T_SYMLINK)
+    struct inode *ip = create(path, T_SYMLINK, 0, 0);
+    if (ip == 0) {
+        end_op();  // End the filesystem operation (unlock)
+        return -1;  // Failed to create inode
+    }
+    
+    // Write the target path (the symlink target) into the inode's data block
+    int len = strlen(target);
+    if (writei(ip, 0, (uint64)target, 0, len + 1) < 0) {
+        iunlockput(ip);  // Release the inode lock and decrement its reference count
+        end_op();        // End the filesystem operation
+        return -1;       // Error writing target path to inode
+    }
+
+    // Update the inode and release it
+    iupdate(ip);
+    iunlockput(ip);
+
+    end_op();  // End the filesystem operation
+    return 0;  // Success
+}
