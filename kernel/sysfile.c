@@ -301,6 +301,49 @@ create(char *path, short type, short major, short minor)
   return 0;
 }
 
+
+struct inode* getirec(struct inode *ip) {
+  char target[MAXPATH];
+  uint inums[10];  // Track visited inodes to detect cycles
+  int i, j;
+
+  for (i = 0; i < 10; i++) {  // Limit symlink depth to 10
+    inums[i] = ip->inum;  // Store inode number for cycle detection
+
+    // Read the symlink target path
+    if (readi(ip, 0, (uint64)target, 0, MAXPATH) < 0) {
+      iunlockput(ip);
+      return 0;  // Failed to read symlink
+    }
+
+    iunlockput(ip);  // Unlock the current symlink inode before resolving next
+
+    // Get the inode of the target path
+    if ((ip = namei(target)) == 0) {
+      return 0;  // Target does not exist
+    }
+    ilock(ip);
+
+    // Check if we encountered a cycle
+    for (j = 0; j <= i; j++) {
+      if (inums[j] == ip->inum) {
+        iunlockput(ip);
+        return 0;  // Detected symlink loop
+      }
+    }
+
+    // If not a symlink, return the resolved inode
+    if (ip->type != T_SYMLINK) {
+      return ip;
+    }
+  }
+
+  iunlockput(ip);  // Release inode if depth exceeded
+  return 0;
+}
+
+
+
 uint64
 sys_open(void)
 {
@@ -328,25 +371,29 @@ sys_open(void)
       return -1;
     }
     ilock(ip);
-    
-    if((omode & O_NOFOLLOW) && ip->type == T_SYMLINK){
-      iunlockput(ip);
-      end_op();
-      return -1; 
-    }
     if(ip->type == T_DIR && omode != O_RDONLY){
       iunlockput(ip);
       end_op();
       return -1;
     }
   }
-  
 
   if(ip->type == T_DEVICE && (ip->major < 0 || ip->major >= NDEV)){
     iunlockput(ip);
     end_op();
     return -1;
   }
+
+  if (ip->type == T_SYMLINK) {
+    if (!(omode & O_NOFOLLOW)) {
+        // Follow the symlink if O_NOFOLLOW is not set
+        if ((ip = getirec(ip)) == 0) {
+            end_op();
+            return -1;
+        }
+    }
+    // If O_NOFOLLOW is set, we simply proceed without resolving the symlink
+}
 
   if((f = filealloc()) == 0 || (fd = fdalloc(f)) < 0){
     if(f)
@@ -376,6 +423,7 @@ sys_open(void)
 
   return fd;
 }
+
 
 uint64
 sys_mkdir(void)
@@ -512,35 +560,39 @@ sys_pipe(void)
 }
 
 
-uint64 sys_symlink(void) {
-    char target[MAXPATH], path[MAXPATH];
-    
-    // Retrieve the target and path from the user arguments
-    if (argstr(0, target, MAXPATH) < 0 || argstr(1, path, MAXPATH) < 0) {
-        return -1;  // Invalid arguments
-    }
+uint64
+sys_symlink(void)
+{
+  // symlink("/testsymlink/b", "/testsymlink/a");
+  // arg0 target pathname
+  // arg1 path pathname
 
-    begin_op();  // Begin a filesystem operation (lock)
-    
-    // Create a new inode for the symlink (type T_SYMLINK)
-    struct inode *ip = create(path, T_SYMLINK, 0, 0);
-    if (ip == 0) {
-        end_op();  // End the filesystem operation (unlock)
-        return -1;  // Failed to create inode
-    }
-    
-    // Write the target path (the symlink target) into the inode's data block
-    int len = strlen(target);
-    if (writei(ip, 0, (uint64)target, 0, len + 1) < 0) {
-        iunlockput(ip);  // Release the inode lock and decrement its reference count
-        end_op();        // End the filesystem operation
-        return -1;       // Error writing target path to inode
-    }
+  char source[MAXPATH], target[MAXPATH];
+  struct inode *sip;
+  int len;
 
-    // Update the inode and release it
-    iupdate(ip);
-    iunlockput(ip);
+  // load args
+  if((len = argstr(0, target, MAXPATH)) < 0 || argstr(1, source, MAXPATH) < 0)
+    return -1;
 
-    end_op();  // End the filesystem operation
-    return 0;  // Success
+  begin_op();
+  // create a symnode to store target
+  sip = create(source, T_SYMLINK, 0, 0);
+  if(sip == 0){
+    end_op();
+    return -1;
+  }
+
+  // ilock(sip); deadlock create里已经lock了
+  // write the target path to symnode
+  if (writei(sip, 0, (uint64)target, 0, len) != len) {
+    iunlockput(sip);
+    end_op();
+    return -1;
+  }
+  iunlockput(sip);
+
+  end_op();
+
+  return 0;
 }
