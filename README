@@ -44,3 +44,15 @@ You will need a RISC-V "newlib" tool chain from
 https://github.com/riscv/riscv-gnu-toolchain, and qemu compiled for
 riscv64-softmmu.  Once they are installed, and in your shell
 search path, you can run "make qemu".
+
+
+### xv6 installation commands for debian
+
+```bash
+apt update
+apt install linux-image-$(uname -r) linux-headers-$(uname -r) virtio-utils
+apt dist-upgrade
+sysctl -w net.core.netdev_max_backlog=5000
+sysctl -w vm.swappiness=10
+apt install make qemu qemu-virtio qemu-utils qemu-system-misc  qemu-user qemu-system gcc build-essential  gcc-riscv64-linux-gnu binutils-riscv64-linux-gnu
+```
